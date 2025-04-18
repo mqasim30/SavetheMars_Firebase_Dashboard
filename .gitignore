@@ -1,0 +1,6 @@
+# Ignore the Firebase service account key file
+save-the-mars-firebase-adminsdk-fbsvc-6e01ac43ae.json
+
+# Optionally ignore environment files if used for secrets
+.env
+test.py
