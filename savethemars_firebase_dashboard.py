@@ -67,7 +67,7 @@ def get_database():
 
 database = get_database()
 
-# NEW: Function to normalize platform field
+# Function to normalize platform field
 def normalize_platform(platform_value):
     """
     Normalize platform values:
@@ -98,6 +98,38 @@ def format_timestamp(timestamp):
             return "Invalid date"
     return "Not available"
 
+# Function to fetch the latest players by platform
+def fetch_latest_players_by_platform(platform_type="Android", limit=10):
+    try:
+        ref = database.reference("PLAYERS")
+        # Get more players than needed to filter by platform
+        query = ref.order_by_child("Install_time").limit_to_last(limit * 5)  # Get 5x more to ensure we have enough after filtering
+        data = query.get()
+        logging.info(f"Fetched players for platform filtering: {platform_type}")
+        
+        if data:
+            # Convert to list of records with UID included and normalize Platform
+            all_players = []
+            for uid, record in data.items():
+                if isinstance(record, dict):
+                    # Add normalized platform
+                    player_record = {"uid": uid, **record}
+                    player_record["Platform"] = normalize_platform(record.get("Platform"))
+                    all_players.append(player_record)
+            
+            # Sort by Install_time descending
+            all_players.sort(key=lambda x: x.get("Install_time", 0), reverse=True)
+            
+            # Filter by platform and take only the requested limit
+            platform_players = [player for player in all_players if player["Platform"] == platform_type][:limit]
+            
+            logging.info(f"Found {len(platform_players)} {platform_type} players out of {len(all_players)} total players")
+            return platform_players
+        return []
+    except Exception as e:
+        logging.error(f"Error fetching latest {platform_type} players: {e}")
+        return []
+
 # Function to fetch the latest 10 players using the index on Install_time
 def fetch_latest_players(limit=10):
     try:
@@ -113,7 +145,7 @@ def fetch_latest_players(limit=10):
                 if isinstance(record, dict):
                     # Add normalized platform
                     player_record = {"uid": uid, **record}
-                    player_record["Platform_Normalized"] = normalize_platform(record.get("Platform"))
+                    player_record["Platform"] = normalize_platform(record.get("Platform"))
                     latest_players.append(player_record)
             return latest_players
         return []
@@ -128,7 +160,7 @@ def fetch_player(uid):
         data = ref.get()
         if data and isinstance(data, dict):
             # Add normalized platform to player data
-            data["Platform_Normalized"] = normalize_platform(data.get("Platform"))
+            data["Platform"] = normalize_platform(data.get("Platform"))
             return data
         return None
     except Exception as e:
@@ -189,7 +221,7 @@ def fetch_latest_conversions_with_player_data(limit=10):
                 player_fields = {
                     "player_geo": player_data.get("Geo", ""),
                     "player_source": player_data.get("Source", ""),
-                    "player_platform": player_data.get("Platform_Normalized", "Android"),  # NEW: Platform support
+                    "player_platform": player_data.get("Platform", "Android"),
                     "player_ip": player_data.get("IP", ""),
                     "player_wins": player_data.get("Wins", 0),
                     "player_impressions": player_data.get("Impressions", 0),
@@ -291,7 +323,7 @@ def fetch_latest_iap_with_player_data(limit=10):
                 player_fields = {
                     "player_geo": player_data.get("Geo", ""),
                     "player_source": player_data.get("Source", ""),
-                    "player_platform": player_data.get("Platform_Normalized", "Android"),  # NEW: Platform support
+                    "player_platform": player_data.get("Platform", "Android"),
                     "player_ip": player_data.get("IP", ""),
                     "player_wins": player_data.get("Wins", 0),
                     "player_impressions": player_data.get("Impressions", 0),
@@ -322,59 +354,62 @@ def fetch_latest_iap_with_player_data(limit=10):
         logging.error(f"Traceback: {traceback.format_exc()}")
         return []
 
-# NEW: Add platform summary at the top
-st.title("🎮 Game Analytics Dashboard")
+# --- LATEST ANDROID PLAYERS SECTION ---
+st.header("🤖 Latest 10 Android Players")
 
-# Platform distribution summary
-st.header("📱 Platform Distribution Summary")
-with st.spinner("Loading platform statistics..."):
-    all_players = fetch_latest_players(50)  # Get more players for better stats
-    if all_players:
-        platform_df = pd.DataFrame(all_players)
-        platform_counts = platform_df['Platform_Normalized'].value_counts()
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("🤖 Android Players", platform_counts.get("Android", 0))
-        with col2:
-            st.metric("🍎 iOS Players", platform_counts.get("iOS", 0))
-        with col3:
-            total_players = len(all_players)
-            ios_percentage = (platform_counts.get("iOS", 0) / total_players * 100) if total_players > 0 else 0
-            st.metric("📊 iOS %", f"{ios_percentage:.1f}%")
+with st.spinner("Loading latest Android players..."):
+    latest_android_players = fetch_latest_players_by_platform("Android", 10)
 
-# --- LATEST PLAYERS SECTION ---
-st.header("👥 Latest 10 Players")
-
-with st.spinner("Loading latest players..."):
-    latest_players = fetch_latest_players(10)
-
-if not latest_players:
-    st.warning("No recent players found or Install_time field not available")
+if not latest_android_players:
+    st.warning("No recent Android players found")
 else:
-    # Create DataFrame from the latest players data
-    latest_df = pd.DataFrame(latest_players)
+    # Create DataFrame from the latest Android players data
+    android_df = pd.DataFrame(latest_android_players)
     
     # Format the Install_time to be more readable
-    if "Install_time" in latest_df.columns:
-        latest_df["Formatted_Install_time"] = latest_df["Install_time"].apply(format_timestamp)
+    if "Install_time" in android_df.columns:
+        android_df["Formatted_Install_time"] = android_df["Install_time"].apply(format_timestamp)
         # Sort the data by Install_time
-        latest_df = latest_df.sort_values(by="Install_time", ascending=False)
+        android_df = android_df.sort_values(by="Install_time", ascending=False)
     
-    if "Last_Impression_time" in latest_df.columns:
-        latest_df["Last_Impression_time"] = latest_df["Last_Impression_time"].apply(format_timestamp)
+    if "Last_Impression_time" in android_df.columns:
+        android_df["Last_Impression_time"] = android_df["Last_Impression_time"].apply(format_timestamp)
     
-    # Display key information in a clean table with Platform
-    display_cols = [
-        "uid", "Platform_Normalized", "Formatted_Install_time", "Source", "Geo", 
-        "IP", "Wins", "Goal", "Impressions", "Ad_Revenue", "Last_Impression_time"
-    ]
-    display_cols = [col for col in display_cols if col in latest_df.columns]
+    # Display key information in a clean table
+    display_cols = ["uid", "Platform", "Formatted_Install_time", "Source", "Geo", "IP", "Wins", "Goal", "Impressions", "Ad_Revenue", "Last_Impression_time"]
+    display_cols = [col for col in display_cols if col in android_df.columns]
     
-    st.dataframe(latest_df[display_cols])
+    st.dataframe(android_df[display_cols])
+
+# --- LATEST iOS PLAYERS SECTION ---
+st.header("🍎 Latest 10 iOS Players")
+
+with st.spinner("Loading latest iOS players..."):
+    latest_ios_players = fetch_latest_players_by_platform("iOS", 10)
+
+if not latest_ios_players:
+    st.warning("No recent iOS players found")
+else:
+    # Create DataFrame from the latest iOS players data
+    ios_df = pd.DataFrame(latest_ios_players)
+    
+    # Format the Install_time to be more readable
+    if "Install_time" in ios_df.columns:
+        ios_df["Formatted_Install_time"] = ios_df["Install_time"].apply(format_timestamp)
+        # Sort the data by Install_time
+        ios_df = ios_df.sort_values(by="Install_time", ascending=False)
+    
+    if "Last_Impression_time" in ios_df.columns:
+        ios_df["Last_Impression_time"] = ios_df["Last_Impression_time"].apply(format_timestamp)
+    
+    # Display key information in a clean table
+    display_cols = ["uid", "Platform", "Formatted_Install_time", "Source", "Geo", "IP", "Wins", "Goal", "Impressions", "Ad_Revenue", "Last_Impression_time"]
+    display_cols = [col for col in display_cols if col in ios_df.columns]
+    
+    st.dataframe(ios_df[display_cols])
 
 # --- LATEST CONVERSIONS SECTION WITH PLAYER DATA ---
-st.header("🎯 Latest 10 Conversions (With Player Data)")
+st.header("Latest 10 Conversions (With Player Data)")
 
 with st.spinner("Loading latest conversions with player data..."):
     latest_conversions = fetch_latest_conversions_with_player_data(10)
@@ -406,7 +441,7 @@ else:
     st.dataframe(conversions_df[display_cols])
 
 # --- LATEST IAP PURCHASES SECTION WITH PLAYER DATA ---
-st.header("💰 Latest 10 In-App Purchases (With Player Data)")
+st.header("Latest 10 In-App Purchases (With Player Data)")
 
 with st.spinner("Loading latest IAP purchases with player data..."):
     latest_iaps = fetch_latest_iap_with_player_data(10)
@@ -421,8 +456,8 @@ else:
     iaps_df = pd.DataFrame(latest_iaps)
     
     # Debug: Show raw DataFrame to check what columns are present
-    with st.expander("🔍 Raw IAP Data (Debug)", expanded=False):
-        st.write(iaps_df.head())
+    st.write("Raw IAP Data (Debug):")
+    st.write(iaps_df.head())
     
     # Format the timestamps to be more readable
     if "timeBought" in iaps_df.columns:
@@ -443,32 +478,3 @@ else:
     display_cols = [col for col in display_cols if col in iaps_df.columns]
     
     st.dataframe(iaps_df[display_cols])
-
-# NEW: Platform-specific analytics section
-st.header("📊 Platform Analytics")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.subheader("🎯 Conversions by Platform")
-    if latest_conversions:
-        conv_platform_df = pd.DataFrame(latest_conversions)
-        if 'player_platform' in conv_platform_df.columns:
-            platform_conv_counts = conv_platform_df['player_platform'].value_counts()
-            st.bar_chart(platform_conv_counts)
-        else:
-            st.write("No platform data available for conversions")
-
-with col2:
-    st.subheader("💰 IAP by Platform")
-    if latest_iaps:
-        iap_platform_df = pd.DataFrame(latest_iaps)
-        if 'player_platform' in iap_platform_df.columns:
-            platform_iap_counts = iap_platform_df['player_platform'].value_counts()
-            st.bar_chart(platform_iap_counts)
-        else:
-            st.write("No platform data available for IAP")
-
-# Footer
-st.markdown("---")
-st.markdown("*Dashboard updates every time you refresh the page*")
