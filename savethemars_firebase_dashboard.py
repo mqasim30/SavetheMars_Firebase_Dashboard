@@ -67,6 +67,37 @@ def get_database():
 
 database = get_database()
 
+# NEW: Function to normalize platform field
+def normalize_platform(platform_value):
+    """
+    Normalize platform values:
+    - None, empty, null → "Android" 
+    - "iOS" → "iOS"
+    - "ios" → "iOS" 
+    - anything else → "Android"
+    """
+    if not platform_value or platform_value == "" or platform_value is None:
+        return "Android"
+    
+    # Handle case variations of iOS
+    if platform_value.lower() == "ios":
+        return "iOS"
+    
+    # Default everything else to Android for safety
+    return "Android"
+
+def format_timestamp(timestamp):
+    if pd.notna(timestamp) and timestamp != 0:
+        try:
+            # Convert to datetime
+            dt = datetime.fromtimestamp(timestamp/1000)
+            # Add 5 hours to adjust for timezone
+            dt = dt + timedelta(hours=5)
+            return dt.strftime('%H:%M:%S %Y-%m-%d')
+        except (ValueError, TypeError):
+            return "Invalid date"
+    return "Not available"
+
 # Function to fetch the latest 10 players using the index on Install_time
 def fetch_latest_players(limit=10):
     try:
@@ -76,8 +107,14 @@ def fetch_latest_players(limit=10):
         data = query.get()
         logging.info(f"Fetched latest {limit} players based on Install_time")
         if data:
-            # Convert to list of records with UID included
-            latest_players = [{"uid": uid, **record} for uid, record in data.items() if isinstance(record, dict)]
+            # Convert to list of records with UID included and normalize Platform
+            latest_players = []
+            for uid, record in data.items():
+                if isinstance(record, dict):
+                    # Add normalized platform
+                    player_record = {"uid": uid, **record}
+                    player_record["Platform_Normalized"] = normalize_platform(record.get("Platform"))
+                    latest_players.append(player_record)
             return latest_players
         return []
     except Exception as e:
@@ -90,6 +127,8 @@ def fetch_player(uid):
         ref = database.reference(f"PLAYERS/{uid}")
         data = ref.get()
         if data and isinstance(data, dict):
+            # Add normalized platform to player data
+            data["Platform_Normalized"] = normalize_platform(data.get("Platform"))
             return data
         return None
     except Exception as e:
@@ -150,6 +189,7 @@ def fetch_latest_conversions_with_player_data(limit=10):
                 player_fields = {
                     "player_geo": player_data.get("Geo", ""),
                     "player_source": player_data.get("Source", ""),
+                    "player_platform": player_data.get("Platform_Normalized", "Android"),  # NEW: Platform support
                     "player_ip": player_data.get("IP", ""),
                     "player_wins": player_data.get("Wins", 0),
                     "player_impressions": player_data.get("Impressions", 0),
@@ -180,21 +220,32 @@ def fetch_latest_iap_with_player_data(limit=10):
         iap_ref = database.reference("IAP")
         all_data = iap_ref.get()
         
+        # Add debug logging to see the raw data structure
+        logging.info("Raw IAP data structure: %s", str(all_data)[:200] + "..." if all_data else "None")
+        
         if not all_data or not isinstance(all_data, dict):
-            logging.warning("No IAP data found")
+            logging.warning("No IAP data found or invalid data structure")
             return []
             
         # Flatten the nested structure
         all_iaps = []
         
-        # Process the nested structure
+        # Process the nested structure - from the screenshot we can see the exact structure
         for user_id, user_data in all_data.items():
             if not isinstance(user_data, dict):
+                logging.warning(f"User data for {user_id} is not a dict: {type(user_data)}")
                 continue
+                
+            # Debug log to see user_data structure
+            logging.info(f"User {user_id} has {len(user_data)} IAP records")
                 
             for purchase_id, purchase_data in user_data.items():
                 if not isinstance(purchase_data, dict):
+                    logging.warning(f"Purchase data for {purchase_id} is not a dict: {type(purchase_data)}")
                     continue
+                
+                # Debug log to see purchase_data structure
+                logging.info(f"Purchase {purchase_id} data: {purchase_data}")
                     
                 # Create a record with all the relevant fields
                 iap = {
@@ -204,15 +255,28 @@ def fetch_latest_iap_with_player_data(limit=10):
                 }
                 all_iaps.append(iap)
         
+        logging.info(f"Total IAP records collected: {len(all_iaps)}")
+        
+        if not all_iaps:
+            logging.warning("No IAP records were collected after processing the data")
+            return []
+        
         # Sort by timeBought (descending) and take the latest ones
-        sorted_iaps = sorted(
-            all_iaps, 
-            key=lambda x: x.get("timeBought", 0), 
-            reverse=True
-        )
+        try:
+            sorted_iaps = sorted(
+                all_iaps, 
+                key=lambda x: x.get("timeBought", 0), 
+                reverse=True
+            )
+            logging.info(f"Successfully sorted {len(sorted_iaps)} IAP records")
+        except Exception as e:
+            logging.error(f"Error sorting IAP data: {e}")
+            # If sorting fails, just use the unsorted list
+            sorted_iaps = all_iaps
         
         # Take only the requested number
         latest_iaps = sorted_iaps[:limit]
+        logging.info(f"Selected {len(latest_iaps)} latest IAP records")
         
         # Enhance each IAP with player data
         enhanced_iaps = []
@@ -227,6 +291,7 @@ def fetch_latest_iap_with_player_data(limit=10):
                 player_fields = {
                     "player_geo": player_data.get("Geo", ""),
                     "player_source": player_data.get("Source", ""),
+                    "player_platform": player_data.get("Platform_Normalized", "Android"),  # NEW: Platform support
                     "player_ip": player_data.get("IP", ""),
                     "player_wins": player_data.get("Wins", 0),
                     "player_impressions": player_data.get("Impressions", 0),
@@ -242,28 +307,44 @@ def fetch_latest_iap_with_player_data(limit=10):
                 # If player data not found, just use the IAP data
                 enhanced_iaps.append(iap)
         
-        logging.info(f"Found {len(all_iaps)} total IAP purchases, returning {len(enhanced_iaps)} enhanced IAP records")
+        logging.info(f"Returning {len(enhanced_iaps)} enhanced IAP records")
+        
+        # Debug: Log the first record to check its structure
+        if enhanced_iaps:
+            logging.info(f"Sample IAP record: {enhanced_iaps[0]}")
         
         return enhanced_iaps
         
     except Exception as e:
         logging.error(f"Error fetching IAP purchases with player data: {e}")
+        # Add more detailed error information including trace
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
         return []
 
-def format_timestamp(timestamp):
-    if pd.notna(timestamp) and timestamp != 0:
-        try:
-            # Convert to datetime
-            dt = datetime.fromtimestamp(timestamp/1000)
-            # Add 5 hours to adjust for timezone
-            dt = dt + timedelta(hours=5)
-            return dt.strftime('%H:%M:%S %Y-%m-%d')
-        except (ValueError, TypeError):
-            return "Invalid date"
-    return "Not available"
+# NEW: Add platform summary at the top
+st.title("🎮 Game Analytics Dashboard")
+
+# Platform distribution summary
+st.header("📱 Platform Distribution Summary")
+with st.spinner("Loading platform statistics..."):
+    all_players = fetch_latest_players(50)  # Get more players for better stats
+    if all_players:
+        platform_df = pd.DataFrame(all_players)
+        platform_counts = platform_df['Platform_Normalized'].value_counts()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("🤖 Android Players", platform_counts.get("Android", 0))
+        with col2:
+            st.metric("🍎 iOS Players", platform_counts.get("iOS", 0))
+        with col3:
+            total_players = len(all_players)
+            ios_percentage = (platform_counts.get("iOS", 0) / total_players * 100) if total_players > 0 else 0
+            st.metric("📊 iOS %", f"{ios_percentage:.1f}%")
 
 # --- LATEST PLAYERS SECTION ---
-st.header("Latest 10 Players")
+st.header("👥 Latest 10 Players")
 
 with st.spinner("Loading latest players..."):
     latest_players = fetch_latest_players(10)
@@ -283,14 +364,17 @@ else:
     if "Last_Impression_time" in latest_df.columns:
         latest_df["Last_Impression_time"] = latest_df["Last_Impression_time"].apply(format_timestamp)
     
-    # Display key information in a clean table
-    display_cols = ["uid", "Formatted_Install_time", "Source", "Geo", "IP", "Wins", "Goal", "Impressions", "Ad_Revenue", "Last_Impression_time"]
+    # Display key information in a clean table with Platform
+    display_cols = [
+        "uid", "Platform_Normalized", "Formatted_Install_time", "Source", "Geo", 
+        "IP", "Wins", "Goal", "Impressions", "Ad_Revenue", "Last_Impression_time"
+    ]
     display_cols = [col for col in display_cols if col in latest_df.columns]
     
     st.dataframe(latest_df[display_cols])
 
 # --- LATEST CONVERSIONS SECTION WITH PLAYER DATA ---
-st.header("Latest 10 Conversions (With Player Data)")
+st.header("🎯 Latest 10 Conversions (With Player Data)")
 
 with st.spinner("Loading latest conversions with player data..."):
     latest_conversions = fetch_latest_conversions_with_player_data(10)
@@ -311,10 +395,10 @@ else:
     if "player_last_impression_time" in conversions_df.columns:
         conversions_df["Formatted_last_impression_time"] = conversions_df["player_last_impression_time"].apply(format_timestamp)
     
-    # Display the conversion information with player data
+    # Display the conversion information with player data including Platform
     display_cols = [
         "user_id", "conversion_id", "Formatted_time", "goal", "source",
-        "player_source", "player_geo", "player_ip", "player_wins", 
+        "player_platform", "player_source", "player_geo", "player_ip", "player_wins", 
         "player_impressions", "player_ad_revenue", "Formatted_install_time", "Formatted_last_impression_time"
     ]
     display_cols = [col for col in display_cols if col in conversions_df.columns]
@@ -322,16 +406,23 @@ else:
     st.dataframe(conversions_df[display_cols])
 
 # --- LATEST IAP PURCHASES SECTION WITH PLAYER DATA ---
-st.header("Latest 10 In-App Purchases (With Player Data)")
+st.header("💰 Latest 10 In-App Purchases (With Player Data)")
 
 with st.spinner("Loading latest IAP purchases with player data..."):
     latest_iaps = fetch_latest_iap_with_player_data(10)
+
+# Add debug display to see if any data was returned
+st.write(f"Found {len(latest_iaps)} IAP records")
 
 if not latest_iaps:
     st.warning("No IAP purchases found. Make sure your IAP data is properly structured.")
 else:
     # Create DataFrame from the enhanced IAP data
     iaps_df = pd.DataFrame(latest_iaps)
+    
+    # Debug: Show raw DataFrame to check what columns are present
+    with st.expander("🔍 Raw IAP Data (Debug)", expanded=False):
+        st.write(iaps_df.head())
     
     # Format the timestamps to be more readable
     if "timeBought" in iaps_df.columns:
@@ -343,12 +434,41 @@ else:
     if "player_last_impression_time" in iaps_df.columns:
         iaps_df["Formatted_last_impression_time"] = iaps_df["player_last_impression_time"].apply(format_timestamp)
     
-    # Display the IAP information with player data
+    # Display the IAP information with player data including Platform
     display_cols = [
         "user_id", "purchase_id", "name", "price", "Formatted_time_bought",
-        "player_source", "player_geo", "player_ip", "player_wins", 
+        "player_platform", "player_source", "player_geo", "player_ip", "player_wins", 
         "player_impressions", "player_ad_revenue", "Formatted_install_time", "Formatted_last_impression_time"
     ]
     display_cols = [col for col in display_cols if col in iaps_df.columns]
     
     st.dataframe(iaps_df[display_cols])
+
+# NEW: Platform-specific analytics section
+st.header("📊 Platform Analytics")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("🎯 Conversions by Platform")
+    if latest_conversions:
+        conv_platform_df = pd.DataFrame(latest_conversions)
+        if 'player_platform' in conv_platform_df.columns:
+            platform_conv_counts = conv_platform_df['player_platform'].value_counts()
+            st.bar_chart(platform_conv_counts)
+        else:
+            st.write("No platform data available for conversions")
+
+with col2:
+    st.subheader("💰 IAP by Platform")
+    if latest_iaps:
+        iap_platform_df = pd.DataFrame(latest_iaps)
+        if 'player_platform' in iap_platform_df.columns:
+            platform_iap_counts = iap_platform_df['player_platform'].value_counts()
+            st.bar_chart(platform_iap_counts)
+        else:
+            st.write("No platform data available for IAP")
+
+# Footer
+st.markdown("---")
+st.markdown("*Dashboard updates every time you refresh the page*")
