@@ -355,7 +355,7 @@ def fetch_latest_iap_with_player_data(limit=10):
         return []
 
 # --- LATEST ANDROID PLAYERS SECTION ---
-st.header("🤖 Latest 10 Android Players")
+st.header("Latest 10 Android Players")
 
 with st.spinner("Loading latest Android players..."):
     latest_android_players = fetch_latest_players_by_platform("Android", 10)
@@ -382,7 +382,7 @@ else:
     st.dataframe(android_df[display_cols])
 
 # --- LATEST iOS PLAYERS SECTION ---
-st.header("🍎 Latest 10 iOS Players")
+st.header("Latest 10 iOS Players")
 
 with st.spinner("Loading latest iOS players..."):
     latest_ios_players = fetch_latest_players_by_platform("iOS", 10)
@@ -446,18 +446,11 @@ st.header("Latest 10 In-App Purchases (With Player Data)")
 with st.spinner("Loading latest IAP purchases with player data..."):
     latest_iaps = fetch_latest_iap_with_player_data(10)
 
-# Add debug display to see if any data was returned
-st.write(f"Found {len(latest_iaps)} IAP records")
-
 if not latest_iaps:
     st.warning("No IAP purchases found. Make sure your IAP data is properly structured.")
 else:
     # Create DataFrame from the enhanced IAP data
     iaps_df = pd.DataFrame(latest_iaps)
-    
-    # Debug: Show raw DataFrame to check what columns are present
-    st.write("Raw IAP Data (Debug):")
-    st.write(iaps_df.head())
     
     # Format the timestamps to be more readable
     if "timeBought" in iaps_df.columns:
