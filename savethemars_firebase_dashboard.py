@@ -98,36 +98,75 @@ def format_timestamp(timestamp):
             return "Invalid date"
     return "Not available"
 
-# Function to fetch the latest players by platform
-def fetch_latest_players_by_platform(platform_type="Android", limit=10):
+# Separate functions for Android and iOS players
+def fetch_latest_android_players(limit=10):
+    """
+    Fetch the latest Android players by getting all players, filtering for Android, 
+    then sorting and taking the most recent ones.
+    """
     try:
         ref = database.reference("PLAYERS")
-        # Get more players than needed to filter by platform
-        query = ref.order_by_child("Install_time").limit_to_last(limit * 5)  # Get 5x more to ensure we have enough after filtering
-        data = query.get()
-        logging.info(f"Fetched players for platform filtering: {platform_type}")
+        # Get a larger set to ensure we have enough Android players
+        all_data = ref.get()
+        logging.info("Fetched all players for Android filtering")
         
-        if data:
-            # Convert to list of records with UID included and normalize Platform
-            all_players = []
-            for uid, record in data.items():
-                if isinstance(record, dict):
-                    # Add normalized platform
+        if not all_data:
+            return []
+        
+        # Convert to list and filter for Android players only
+        android_players = []
+        for uid, record in all_data.items():
+            if isinstance(record, dict):
+                normalized_platform = normalize_platform(record.get("Platform"))
+                if normalized_platform == "Android":
                     player_record = {"uid": uid, **record}
-                    player_record["Platform"] = normalize_platform(record.get("Platform"))
-                    all_players.append(player_record)
-            
-            # Sort by Install_time descending
-            all_players.sort(key=lambda x: x.get("Install_time", 0), reverse=True)
-            
-            # Filter by platform and take only the requested limit
-            platform_players = [player for player in all_players if player["Platform"] == platform_type][:limit]
-            
-            logging.info(f"Found {len(platform_players)} {platform_type} players out of {len(all_players)} total players")
-            return platform_players
-        return []
+                    player_record["Platform"] = normalized_platform
+                    android_players.append(player_record)
+        
+        # Sort by Install_time descending and take the latest ones
+        android_players.sort(key=lambda x: x.get("Install_time", 0), reverse=True)
+        latest_android = android_players[:limit]
+        
+        logging.info(f"Found {len(latest_android)} latest Android players out of {len(android_players)} total Android players")
+        return latest_android
+        
     except Exception as e:
-        logging.error(f"Error fetching latest {platform_type} players: {e}")
+        logging.error(f"Error fetching latest Android players: {e}")
+        return []
+
+def fetch_latest_ios_players(limit=10):
+    """
+    Fetch the latest iOS players by getting all players, filtering for iOS, 
+    then sorting and taking the most recent ones.
+    """
+    try:
+        ref = database.reference("PLAYERS")
+        # Get a larger set to ensure we have enough iOS players
+        all_data = ref.get()
+        logging.info("Fetched all players for iOS filtering")
+        
+        if not all_data:
+            return []
+        
+        # Convert to list and filter for iOS players only
+        ios_players = []
+        for uid, record in all_data.items():
+            if isinstance(record, dict):
+                normalized_platform = normalize_platform(record.get("Platform"))
+                if normalized_platform == "iOS":
+                    player_record = {"uid": uid, **record}
+                    player_record["Platform"] = normalized_platform
+                    ios_players.append(player_record)
+        
+        # Sort by Install_time descending and take the latest ones
+        ios_players.sort(key=lambda x: x.get("Install_time", 0), reverse=True)
+        latest_ios = ios_players[:limit]
+        
+        logging.info(f"Found {len(latest_ios)} latest iOS players out of {len(ios_players)} total iOS players")
+        return latest_ios
+        
+    except Exception as e:
+        logging.error(f"Error fetching latest iOS players: {e}")
         return []
 
 # Function to fetch the latest 10 players using the index on Install_time
@@ -358,7 +397,7 @@ def fetch_latest_iap_with_player_data(limit=10):
 st.header("Latest 10 Android Players")
 
 with st.spinner("Loading latest Android players..."):
-    latest_android_players = fetch_latest_players_by_platform("Android", 10)
+    latest_android_players = fetch_latest_android_players(10)
 
 if not latest_android_players:
     st.warning("No recent Android players found")
@@ -385,7 +424,7 @@ else:
 st.header("Latest 10 iOS Players")
 
 with st.spinner("Loading latest iOS players..."):
-    latest_ios_players = fetch_latest_players_by_platform("iOS", 10)
+    latest_ios_players = fetch_latest_ios_players(10)
 
 if not latest_ios_players:
     st.warning("No recent iOS players found")
