@@ -98,8 +98,7 @@ def format_timestamp(timestamp):
             return "Invalid date"
     return "Not available"
 
-# OPTIMIZED FUNCTIONS - Much more efficient!
-
+# Separate functions for Android and iOS players
 def fetch_latest_android_players(limit=10):
     """
     Efficiently fetch Android players using Platform filter.
@@ -168,7 +167,7 @@ def fetch_latest_ios_players(limit=10):
         logging.error(f"Error fetching latest iOS players: {e}")
         return []
 
-# Function to fetch the latest 10 players using the index on Install_time (kept as backup)
+# Function to fetch the latest 10 players using the index on Install_time
 def fetch_latest_players(limit=10):
     try:
         ref = database.reference("PLAYERS")
@@ -205,11 +204,8 @@ def fetch_player(uid):
         logging.error(f"Error fetching player {uid}: {e}")
         return None
 
+# Function to fetch the latest 10 conversions efficiently with player data
 def fetch_latest_conversions_with_player_data(limit=10):
-    """
-    Efficiently fetch conversions using the time index.
-    Much more efficient than downloading all conversions.
-    """
     try:
         # Use the indexed "time" field to get latest conversions efficiently
         conv_ref = database.reference("CONVERSIONS")
@@ -252,7 +248,7 @@ def fetch_latest_conversions_with_player_data(limit=10):
         # Take only the requested number
         latest_conversions = sorted_conversions[:limit]
         
-        # Enhance each conversion with player data (this is still efficient as it's individual lookups)
+        # Enhance each conversion with player data
         enhanced_conversions = []
         for conversion in latest_conversions:
             user_id = conversion.get("user_id")
@@ -261,7 +257,7 @@ def fetch_latest_conversions_with_player_data(limit=10):
             player_data = fetch_player(user_id)
             
             if player_data:
-                # Add player data as prefixed fields
+                # Add player data as prefixed fields (to avoid name collisions)
                 player_fields = {
                     "player_geo": player_data.get("Geo", ""),
                     "player_source": player_data.get("Source", ""),
@@ -289,18 +285,15 @@ def fetch_latest_conversions_with_player_data(limit=10):
         logging.error(f"Error fetching conversions with player data: {e}")
         return []
 
+# Function to fetch the latest 10 IAP purchases efficiently with player data
 def fetch_latest_iap_with_player_data(limit=10):
-    """
-    Efficiently fetch IAP purchases using the timeBought index.
-    Much more efficient than downloading all IAP data.
-    """
     try:
-        # Get the entire IAP branch but try to limit it
+        # Directly get the entire IAP branch
         iap_ref = database.reference("IAP")
+        all_data = iap_ref.get()
         
-        # Since IAP has nested structure like CONVERSIONS, we need to be smart about this
-        # Get a reasonable amount of recent data instead of everything
-        all_data = iap_ref.limit_to_last(100).get()  # Limit to last 100 user records instead of all
+        # Add debug logging to see the raw data structure
+        logging.info("Raw IAP data structure: %s", str(all_data)[:200] + "..." if all_data else "None")
         
         if not all_data or not isinstance(all_data, dict):
             logging.warning("No IAP data found or invalid data structure")
@@ -309,14 +302,22 @@ def fetch_latest_iap_with_player_data(limit=10):
         # Flatten the nested structure
         all_iaps = []
         
-        # Process the nested structure
+        # Process the nested structure - from the screenshot we can see the exact structure
         for user_id, user_data in all_data.items():
             if not isinstance(user_data, dict):
+                logging.warning(f"User data for {user_id} is not a dict: {type(user_data)}")
                 continue
+                
+            # Debug log to see user_data structure
+            logging.info(f"User {user_id} has {len(user_data)} IAP records")
                 
             for purchase_id, purchase_data in user_data.items():
                 if not isinstance(purchase_data, dict):
+                    logging.warning(f"Purchase data for {purchase_id} is not a dict: {type(purchase_data)}")
                     continue
+                
+                # Debug log to see purchase_data structure
+                logging.info(f"Purchase {purchase_id} data: {purchase_data}")
                     
                 # Create a record with all the relevant fields
                 iap = {
@@ -325,6 +326,8 @@ def fetch_latest_iap_with_player_data(limit=10):
                     **purchase_data  # This adds name, price, timeBought
                 }
                 all_iaps.append(iap)
+        
+        logging.info(f"Total IAP records collected: {len(all_iaps)}")
         
         if not all_iaps:
             logging.warning("No IAP records were collected after processing the data")
@@ -337,12 +340,15 @@ def fetch_latest_iap_with_player_data(limit=10):
                 key=lambda x: x.get("timeBought", 0), 
                 reverse=True
             )
+            logging.info(f"Successfully sorted {len(sorted_iaps)} IAP records")
         except Exception as e:
             logging.error(f"Error sorting IAP data: {e}")
+            # If sorting fails, just use the unsorted list
             sorted_iaps = all_iaps
         
         # Take only the requested number
         latest_iaps = sorted_iaps[:limit]
+        logging.info(f"Selected {len(latest_iaps)} latest IAP records")
         
         # Enhance each IAP with player data
         enhanced_iaps = []
@@ -353,7 +359,7 @@ def fetch_latest_iap_with_player_data(limit=10):
             player_data = fetch_player(user_id)
             
             if player_data:
-                # Add player data as prefixed fields
+                # Add player data as prefixed fields (to avoid name collisions)
                 player_fields = {
                     "player_geo": player_data.get("Geo", ""),
                     "player_source": player_data.get("Source", ""),
@@ -375,49 +381,18 @@ def fetch_latest_iap_with_player_data(limit=10):
         
         logging.info(f"Returning {len(enhanced_iaps)} enhanced IAP records")
         
+        # Debug: Log the first record to check its structure
+        if enhanced_iaps:
+            logging.info(f"Sample IAP record: {enhanced_iaps[0]}")
+        
         return enhanced_iaps
         
     except Exception as e:
         logging.error(f"Error fetching IAP purchases with player data: {e}")
+        # Add more detailed error information including trace
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
         return []
-
-# Optional: Add a function to fetch players by source efficiently
-def fetch_players_by_source(source_value, limit=10):
-    """
-    Fetch players by a specific source value.
-    Useful for analyzing traffic from specific sources.
-    """
-    try:
-        ref = database.reference("PLAYERS")
-        # Filter by Source and order by Install_time
-        query = ref.order_by_child("Source").equal_to(source_value).limit_to_last(limit * 2)
-        data = query.get()
-        logging.info(f"Fetched players with Source = {source_value}")
-        
-        if not data:
-            return []
-        
-        # Convert to list
-        players = []
-        for uid, record in data.items():
-            if isinstance(record, dict):
-                player_record = {"uid": uid, **record}
-                player_record["Platform"] = normalize_platform(record.get("Platform"))
-                players.append(player_record)
-        
-        # Sort by Install_time descending
-        players.sort(key=lambda x: x.get("Install_time", 0), reverse=True)
-        return players[:limit]
-        
-    except Exception as e:
-        logging.error(f"Error fetching players by source: {e}")
-        return []
-
-# ========== STREAMLIT UI SECTIONS ==========
-
-# Add a header with optimization status
-st.title("🚀 Optimized Firebase Dashboard")
-st.info("✅ This dashboard now uses efficient Firebase queries with 95%+ cost reduction!")
 
 # --- LATEST ANDROID PLAYERS SECTION ---
 st.header("Latest 10 Android Players")
@@ -536,23 +511,3 @@ else:
     display_cols = [col for col in display_cols if col in iaps_df.columns]
     
     st.dataframe(iaps_df[display_cols])
-
-# --- OPTIMIZATION STATUS ---
-st.markdown("---")
-st.success("🎉 **Dashboard Optimized!** This version uses efficient Firebase queries with proper indexing, reducing costs by 95%+")
-st.info("💡 **Pro Tip:** Add Source, Platform indexes to your Firebase rules for even better performance!")
-
-# Optional: Add a section to test source-based queries
-with st.expander("🔍 Advanced: Query by Source"):
-    source_input = st.text_input("Enter source value to search:")
-    if source_input:
-        with st.spinner(f"Loading players from source: {source_input}"):
-            source_players = fetch_players_by_source(source_input, 20)
-        
-        if source_players:
-            source_df = pd.DataFrame(source_players)
-            if "Install_time" in source_df.columns:
-                source_df["Formatted_Install_time"] = source_df["Install_time"].apply(format_timestamp)
-            st.dataframe(source_df)
-        else:
-            st.warning(f"No players found from source: {source_input}")
