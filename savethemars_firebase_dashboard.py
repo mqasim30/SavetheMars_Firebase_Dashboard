@@ -98,41 +98,19 @@ def format_timestamp(timestamp):
             return "Invalid date"
     return "Not available"
 
-# UNIFIED EFFICIENT APPROACH - ONE QUERY FOR BOTH PLATFORMS
+# UNIFIED EFFICIENT FUNCTIONS - ONE QUERY FOR BOTH PLATFORMS
 
 def fetch_latest_players_by_platform(android_limit=10, ios_limit=10, total_recent=100):
     """
     Efficiently fetch latest players from both platforms using ONE query.
-    Gets the latest 100 players, then filters locally for Android and iOS.
-    
-    Args:
-        android_limit: Number of Android players to return
-        ios_limit: Number of iOS players to return  
-        total_recent: Total recent players to fetch for filtering
-    
-    Returns:
-        dict: {
-            'android_players': [...],
-            'ios_players': [...],
-            'stats': {...}
-        }
     """
     try:
         ref = database.reference("PLAYERS")
-        
-        # ONE efficient query to get latest 100 players by Install_time
         query = ref.order_by_child("Install_time").limit_to_last(total_recent)
         data = query.get()
         
-        record_count = len(data) if data else 0
-        logging.info(f"Single unified query returned {record_count} recent players")
-        
         if not data:
-            return {
-                'android_players': [],
-                'ios_players': [],
-                'stats': {'total_fetched': 0, 'android_found': 0, 'ios_found': 0}
-            }
+            return {'android_players': [], 'ios_players': []}
         
         # Convert to list and sort by Install_time (latest first)
         all_recent_players = []
@@ -142,7 +120,6 @@ def fetch_latest_players_by_platform(android_limit=10, ios_limit=10, total_recen
                 player_record["Platform"] = normalize_platform(record.get("Platform"))
                 all_recent_players.append(player_record)
         
-        # Sort by Install_time descending (latest first)
         all_recent_players.sort(key=lambda x: x.get("Install_time", 0), reverse=True)
         
         # Filter into separate platform lists
@@ -152,42 +129,61 @@ def fetch_latest_players_by_platform(android_limit=10, ios_limit=10, total_recen
         for player in all_recent_players:
             platform = player.get("Platform", "")
             
-            # Add to Android list if we need more and this is Android
             if len(android_players) < android_limit and platform == "Android":
                 android_players.append(player)
-            
-            # Add to iOS list if we need more and this is iOS  
             elif len(ios_players) < ios_limit and platform == "iOS":
                 ios_players.append(player)
             
-            # Stop if we have enough of both
             if len(android_players) >= android_limit and len(ios_players) >= ios_limit:
                 break
         
-        # Log results
-        stats = {
-            'total_fetched': record_count,
-            'android_found': len(android_players),
-            'ios_found': len(ios_players),
-            'android_requested': android_limit,
-            'ios_requested': ios_limit
-        }
-        
-        logging.info(f"✅ Platform filtering: Android {len(android_players)}/{android_limit}, iOS {len(ios_players)}/{ios_limit}")
+        logging.info(f"Found {len(android_players)} Android and {len(ios_players)} iOS players from {len(data)} recent players")
         
         return {
             'android_players': android_players,
-            'ios_players': ios_players,  
-            'stats': stats
+            'ios_players': ios_players
         }
         
     except Exception as e:
         logging.error(f"Error fetching latest players by platform: {e}")
-        return {
-            'android_players': [],
-            'ios_players': [],
-            'stats': {'error': str(e)}
-        }
+        return {'android_players': [], 'ios_players': []}
+
+def fetch_latest_android_players(limit=10):
+    """
+    Efficiently fetch Android players using unified query.
+    """
+    result = fetch_latest_players_by_platform(android_limit=limit, ios_limit=0, total_recent=100)
+    return result['android_players']
+
+def fetch_latest_ios_players(limit=10):
+    """
+    Efficiently fetch iOS players using unified query.
+    """
+    result = fetch_latest_players_by_platform(android_limit=0, ios_limit=limit, total_recent=100) 
+    return result['ios_players']
+
+# Function to fetch the latest 10 players using the index on Install_time
+def fetch_latest_players(limit=10):
+    try:
+        ref = database.reference("PLAYERS")
+        # Order by Install_time descending and limit to last 10 entries
+        query = ref.order_by_child("Install_time").limit_to_last(limit)
+        data = query.get()
+        logging.info(f"Fetched latest {limit} players based on Install_time")
+        if data:
+            # Convert to list of records with UID included and normalize Platform
+            latest_players = []
+            for uid, record in data.items():
+                if isinstance(record, dict):
+                    # Add normalized platform
+                    player_record = {"uid": uid, **record}
+                    player_record["Platform"] = normalize_platform(record.get("Platform"))
+                    latest_players.append(player_record)
+            return latest_players
+        return []
+    except Exception as e:
+        logging.error(f"Error fetching latest players: {e}")
+        return []
 
 # Function to fetch a specific player by UID
 def fetch_player(uid):
@@ -393,38 +389,23 @@ def fetch_latest_iap_with_player_data(limit=10):
         logging.error(f"Traceback: {traceback.format_exc()}")
         return []
 
-# --- UNIFIED PLAYERS SECTION (ONE QUERY FOR BOTH PLATFORMS) ---
-st.header("🚀 Latest Players (Optimized)")
+# --- LATEST ANDROID PLAYERS SECTION ---
+st.header("Latest 10 Android Players")
 
-with st.spinner("Loading latest players from both platforms..."):
-    # ONE efficient query gets both Android and iOS players
-    result = fetch_latest_players_by_platform(android_limit=10, ios_limit=10, total_recent=100)
-    
-    android_players = result['android_players']
-    ios_players = result['ios_players'] 
-    stats = result['stats']
+with st.spinner("Loading latest Android players..."):
+    latest_android_players = fetch_latest_android_players(10)
 
-# Display efficiency stats
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("📊 Records Downloaded", stats.get('total_fetched', 0))
-with col2:
-    st.metric("📱 Android Found", len(android_players))
-with col3:
-    st.metric("🍎 iOS Found", len(ios_players))
-
-# --- ANDROID PLAYERS SECTION ---
-st.subheader("📱 Latest 10 Android Players")
-
-if not android_players:
+if not latest_android_players:
     st.warning("No recent Android players found")
 else:
-    # Create DataFrame from Android players
-    android_df = pd.DataFrame(android_players)
+    # Create DataFrame from the latest Android players data
+    android_df = pd.DataFrame(latest_android_players)
     
     # Format the Install_time to be more readable
     if "Install_time" in android_df.columns:
         android_df["Formatted_Install_time"] = android_df["Install_time"].apply(format_timestamp)
+        # Sort the data by Install_time
+        android_df = android_df.sort_values(by="Install_time", ascending=False)
     
     if "Last_Impression_time" in android_df.columns:
         android_df["Last_Impression_time"] = android_df["Last_Impression_time"].apply(format_timestamp)
@@ -435,18 +416,23 @@ else:
     
     st.dataframe(android_df[display_cols])
 
-# --- iOS PLAYERS SECTION ---
-st.subheader("🍎 Latest 10 iOS Players")
+# --- LATEST iOS PLAYERS SECTION ---
+st.header("Latest 10 iOS Players")
 
-if not ios_players:
+with st.spinner("Loading latest iOS players..."):
+    latest_ios_players = fetch_latest_ios_players(10)
+
+if not latest_ios_players:
     st.warning("No recent iOS players found")
 else:
-    # Create DataFrame from iOS players
-    ios_df = pd.DataFrame(ios_players)
+    # Create DataFrame from the latest iOS players data
+    ios_df = pd.DataFrame(latest_ios_players)
     
     # Format the Install_time to be more readable
     if "Install_time" in ios_df.columns:
         ios_df["Formatted_Install_time"] = ios_df["Install_time"].apply(format_timestamp)
+        # Sort the data by Install_time
+        ios_df = ios_df.sort_values(by="Install_time", ascending=False)
     
     if "Last_Impression_time" in ios_df.columns:
         ios_df["Last_Impression_time"] = ios_df["Last_Impression_time"].apply(format_timestamp)
@@ -520,17 +506,3 @@ else:
     display_cols = [col for col in display_cols if col in iaps_df.columns]
     
     st.dataframe(iaps_df[display_cols])
-
-# --- EFFICIENCY SUMMARY ---
-st.markdown("---")
-with st.expander("💡 Dashboard Efficiency Summary"):
-    st.write("**🎯 Optimization Results:**")
-    st.write(f"• **Single Query:** Downloaded {stats.get('total_fetched', 0)} records for both platforms")
-    st.write(f"• **Platform Split:** {len(android_players)} Android + {len(ios_players)} iOS players")  
-    st.write(f"• **Cost Savings:** 99%+ reduction vs downloading entire database")
-    st.write(f"• **Latest Data:** All players from the most recent {stats.get('total_fetched', 0)} installs")
-    
-    if stats.get('total_fetched', 0) > 0:
-        android_percentage = (len(android_players) / stats['total_fetched']) * 100
-        ios_percentage = (len(ios_players) / stats['total_fetched']) * 100
-        st.write(f"• **Platform Distribution:** {android_percentage:.1f}% Android, {ios_percentage:.1f}% iOS in recent players")
