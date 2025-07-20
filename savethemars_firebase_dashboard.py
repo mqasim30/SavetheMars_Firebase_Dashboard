@@ -98,69 +98,122 @@ def format_timestamp(timestamp):
             return "Invalid date"
     return "Not available"
 
-# UNIFIED EFFICIENT FUNCTIONS - ONE QUERY FOR BOTH PLATFORMS
-
-def fetch_latest_players_by_platform(android_limit=10, ios_limit=10, total_recent=100):
+# Separate functions for Android and iOS players
+def fetch_latest_android_players(limit=10):
     """
-    Efficiently fetch latest players from both platforms using ONE query.
+    Smart function that uses Platform_Install_Time if available, falls back to unified query if not.
     """
     try:
         ref = database.reference("PLAYERS")
-        query = ref.order_by_child("Install_time").limit_to_last(total_recent)
+        
+        # Try optimized query first (for new users with Platform_Install_Time)
+        try:
+            query = (ref.order_by_child("Platform_Install_Time")
+                       .start_at("android_")
+                       .end_at("android_\uf8ff")
+                       .limit_to_last(limit))
+            
+            data = query.get()
+            
+            if data and len(data) >= limit:
+                # Success with optimized query
+                android_players = []
+                for uid, record in data.items():
+                    if isinstance(record, dict):
+                        player_record = {"uid": uid, **record}
+                        player_record["Platform"] = normalize_platform(record.get("Platform"))
+                        android_players.append(player_record)
+                
+                android_players.sort(key=lambda x: x.get("Install_time", 0), reverse=True)
+                logging.info(f"Used optimized Platform_Install_Time query for Android: {len(android_players)} players")
+                return android_players[:limit]
+        
+        except Exception as e:
+            logging.info(f"Platform_Install_Time query failed, using fallback: {e}")
+        
+        # Fallback to unified query (for existing users without Platform_Install_Time)
+        query = ref.order_by_child("Install_time").limit_to_last(limit * 4)
         data = query.get()
         
         if not data:
-            return {'android_players': [], 'ios_players': []}
+            return []
         
-        # Convert to list and sort by Install_time (latest first)
-        all_recent_players = []
+        android_players = []
         for uid, record in data.items():
             if isinstance(record, dict):
-                player_record = {"uid": uid, **record}
-                player_record["Platform"] = normalize_platform(record.get("Platform"))
-                all_recent_players.append(player_record)
+                platform = record.get("Platform", "")
+                if platform == "" or platform is None:
+                    player_record = {"uid": uid, **record}
+                    player_record["Platform"] = normalize_platform(platform)
+                    android_players.append(player_record)
         
-        all_recent_players.sort(key=lambda x: x.get("Install_time", 0), reverse=True)
+        android_players.sort(key=lambda x: x.get("Install_time", 0), reverse=True)
+        latest_android = android_players[:limit]
         
-        # Filter into separate platform lists
-        android_players = []
-        ios_players = []
-        
-        for player in all_recent_players:
-            platform = player.get("Platform", "")
-            
-            if len(android_players) < android_limit and platform == "Android":
-                android_players.append(player)
-            elif len(ios_players) < ios_limit and platform == "iOS":
-                ios_players.append(player)
-            
-            if len(android_players) >= android_limit and len(ios_players) >= ios_limit:
-                break
-        
-        logging.info(f"Found {len(android_players)} Android and {len(ios_players)} iOS players from {len(data)} recent players")
-        
-        return {
-            'android_players': android_players,
-            'ios_players': ios_players
-        }
+        logging.info(f"Used fallback query for Android: {len(latest_android)} players from {len(data)} recent")
+        return latest_android
         
     except Exception as e:
-        logging.error(f"Error fetching latest players by platform: {e}")
-        return {'android_players': [], 'ios_players': []}
-
-def fetch_latest_android_players(limit=10):
-    """
-    Efficiently fetch Android players using unified query.
-    """
-    result = fetch_latest_players_by_platform(android_limit=limit, ios_limit=0, total_recent=100)
-    return result['android_players']
+        logging.error(f"Error fetching latest Android players: {e}")
+        return []
 
 def fetch_latest_ios_players(limit=10):
     """
-    Efficiently fetch iOS players using unified query.
+    Smart function that uses Platform_Install_Time if available, falls back to unified query if not.
     """
-    result = fetch_latest_players_by_platform(android_limit=0, ios_limit=limit, total_recent=100) 
-    return result['ios_players']
+    try:
+        ref = database.reference("PLAYERS")
+        
+        # Try optimized query first (for new users with Platform_Install_Time)
+        try:
+            query = (ref.order_by_child("Platform_Install_Time")
+                       .start_at("ios_")
+                       .end_at("ios_\uf8ff")
+                       .limit_to_last(limit))
+            
+            data = query.get()
+            
+            if data and len(data) >= limit:
+                # Success with optimized query
+                ios_players = []
+                for uid, record in data.items():
+                    if isinstance(record, dict):
+                        player_record = {"uid": uid, **record}
+                        player_record["Platform"] = normalize_platform(record.get("Platform"))
+                        ios_players.append(player_record)
+                
+                ios_players.sort(key=lambda x: x.get("Install_time", 0), reverse=True)
+                logging.info(f"Used optimized Platform_Install_Time query for iOS: {len(ios_players)} players")
+                return ios_players[:limit]
+        
+        except Exception as e:
+            logging.info(f"Platform_Install_Time query failed, using fallback: {e}")
+        
+        # Fallback to unified query (for existing users without Platform_Install_Time)
+        query = ref.order_by_child("Install_time").limit_to_last(limit * 6)
+        data = query.get()
+        
+        if not data:
+            return []
+        
+        ios_players = []
+        for uid, record in data.items():
+            if isinstance(record, dict):
+                platform = record.get("Platform", "")
+                if platform.lower() == "ios":
+                    player_record = {"uid": uid, **record}
+                    player_record["Platform"] = normalize_platform(platform)
+                    ios_players.append(player_record)
+        
+        ios_players.sort(key=lambda x: x.get("Install_time", 0), reverse=True)
+        latest_ios = ios_players[:limit]
+        
+        logging.info(f"Used fallback query for iOS: {len(latest_ios)} players from {len(data)} recent")
+        return latest_ios
+        
+    except Exception as e:
+        logging.error(f"Error fetching latest iOS players: {e}")
+        return []
 
 # Function to fetch the latest 10 players using the index on Install_time
 def fetch_latest_players(limit=10):
